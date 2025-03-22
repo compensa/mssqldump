@@ -45,7 +45,7 @@ def dump_table(conn, table_name, no_data, no_create_info, add_drop_table, ):
         create_table_query = f"CREATE TABLE {table_name} (\n"
         for _, row in schema_df.iterrows():
             column_definition = f"    {row['COLUMN_NAME']} {row['DATA_TYPE']}"
-            if row['DATA_TYPE'] in ['varchar', 'char', 'nvarchar', 'nchar'] and row['CHARACTER_MAXIMUM_LENGTH'] is not None:
+            if row['DATA_TYPE'] in ['varchar', 'char', 'nvarchar', 'nchar'] and row['CHARACTER_MAXIMUM_LENGTH'] not in [None, -1]:
                 column_definition += f"({int(row['CHARACTER_MAXIMUM_LENGTH'])})"
             if row['IS_NULLABLE'] == 'NO':
                 column_definition += " NOT NULL"
