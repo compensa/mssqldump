@@ -1,6 +1,7 @@
 import pyodbc
 import pandas as pd
 import argparse
+import datetime
 
 def mssqldump(database: str,
               user: str = "SA",
@@ -60,7 +61,12 @@ def dump_table(conn, table_name, no_data, no_create_info, add_drop_table, ):
         cursor.execute(data_query)
 
         def repl(value):
-            return str(value).replace('\'', '\'\'')
+            if(isinstance(value, datetime.datetime)):
+                value = value.strftime("%Y-%m-%d %H:%M:%S") + \
+                    f'.{value.microsecond // 1000:03}'
+            else:
+                value = str(value)
+            return value.replace('\'', '\'\'')
 
         i = 0
         insert_statement = ""
