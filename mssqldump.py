@@ -1,5 +1,5 @@
+import sys
 import pyodbc
-import pandas as pd
 import argparse
 import datetime
 
@@ -11,6 +11,7 @@ def mssqldump(database: str,
               tables: list[str] | None = None,
               no_data: bool = False,
               no_create_info: bool = False,
+              no_indices: bool = False,
               add_drop_table: bool = False):
 
     conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host},{port};DATABASE={database};UID={user};PWD={password}'
@@ -20,7 +21,8 @@ def mssqldump(database: str,
     tables = tables or list_tables(conn)
 
     for table in tables:
-        dump_table(conn, table, no_data, no_create_info, add_drop_table)
+        dump_table(conn, table, no_data, no_create_info, no_indices,
+                   add_drop_table)
 
     conn.close()
 
@@ -35,57 +37,119 @@ def list_tables(conn):
     return [table[0] for table in tables]
 
 
-def dump_table(conn, table_name, no_data, no_create_info, add_drop_table, ):
-    schema_query = f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table_name}'"
-    schema_df = pd.read_sql(schema_query, conn)
+def dump_indices(conn, table_name):
+    cursor = conn.cursor()
+    # Get the indices
+    cursor.execute(f"""
+        SELECT
+            i.name AS IndexName,
+            i.type_desc AS IndexType,
+            i.is_primary_key AS IsPrimaryKey,
+            c.name AS ColumnName
+        FROM
+            sys.indexes AS i
+        JOIN
+            sys.index_columns AS ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+        JOIN
+            sys.columns AS c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        WHERE
+            i.object_id = OBJECT_ID('{table_name}')
+        ORDER BY
+            i.name, ic.key_ordinal
+    """)
 
+    indices = cursor.fetchall()
+
+    # Format the indices
+    index_statements = {}
+    pks = {}
+    for index in indices:
+        index_name = index.IndexName
+        column_name = index.ColumnName
+        if index.IsPrimaryKey:
+            if index_name not in pks:
+                pks[index_name] = []
+            pks[index_name].append(column_name)
+        else:
+            if index_name not in index_statements:
+                index_statements[index_name] = []
+            index_statements[index_name].append(column_name)
+
+    # Construct the primary key creation statements
+    for index_name, columns in pks.items():
+        columns_list = ', '.join(columns)
+        print(f"ALTER TABLE {table_name} ADD CONSTRAINT {index_name} PRIMARY KEY ({columns_list});")
+
+    # Construct the index creation statements
+    for index_name, columns in index_statements.items():
+        columns_list = ', '.join(columns)
+        print(f"CREATE INDEX {index_name} ON {table_name} ({columns_list});")
+
+def dump_table(conn, table_name, no_data, no_create_info, no_indices,
+               add_drop_table):
     if add_drop_table:
         print(f"DROP TABLE IF EXISTS {table_name};\n\n")
 
-    if not no_create_info:
-        create_table_query = f"CREATE TABLE {table_name} (\n"
-        for _, row in schema_df.iterrows():
-            column_definition = f"    {row['COLUMN_NAME']} {row['DATA_TYPE']}"
-            if row['DATA_TYPE'] in ['varchar', 'char', 'nvarchar', 'nchar'] and row['CHARACTER_MAXIMUM_LENGTH'] not in [None, -1]:
-                column_definition += f"({int(row['CHARACTER_MAXIMUM_LENGTH'])})"
-            if row['IS_NULLABLE'] == 'NO':
-                column_definition += " NOT NULL"
-            create_table_query += column_definition + ",\n"
+    schema_query = f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table_name}'"
+    cursor = conn.cursor()
+    cursor.execute(schema_query)
 
+    create_table_query = f"CREATE TABLE {table_name} (\n"
+    columns = []
+    for row in cursor:
+        column_name = row[0]
+        columns.append(column_name)
+        if no_create_info:
+            continue
+        data_type = row[1]
+        is_nullable = row[2]
+        character_max_length = row[3]
+        column_definition = f"    {column_name} {data_type}"
+        if data_type in ['varchar', 'char', 'nvarchar', 'nchar'] and character_max_length not in [None, -1]:
+            column_definition += f"({int(character_max_length)})"
+        if is_nullable == 'NO':
+            column_definition += " NOT NULL"
+        create_table_query += column_definition + ",\n"
+
+    if not no_create_info:
         print(create_table_query.rstrip(',\n') + "\n);\n\n")
 
-    if not no_data:
-        # Dump data as a single SQL INSERT statement
-        data_query = f'SELECT * FROM {table_name}'
-        cursor = conn.cursor()
-        cursor.execute(data_query)
+    if not no_indices:
+        dump_indices(conn, table_name)
 
-        def repl(value):
-            if(isinstance(value, datetime.datetime)):
-                value = value.strftime("%Y-%m-%d %H:%M:%S") + \
-                    f'.{value.microsecond // 1000:03}'
-            else:
-                value = str(value)
-            return value.replace('\'', '\'\'')
+    if no_data:
+        return
+    # Dump data as a single SQL INSERT statement
+    data_query = f'SELECT * FROM {table_name}'
+    cursor = conn.cursor()
+    cursor.execute(data_query)
 
-        i = 0
-        insert_statement = ""
-        for row in cursor:
-            if i % 1000 == 0:
-                insert_statement = f"; INSERT INTO {table_name} ({', '.join(schema_df['COLUMN_NAME'])}) VALUES \n" # noqa
-            else:
-                insert_statement = ", "
-            insert_statement += "("
-            for value in row:
-                insert_statement += \
-                    (f"'{repl(value)}'" if value is not None else 'NULL') + ", "
-            insert_statement = insert_statement[:-2] + ")\n"
-            print(insert_statement)
-            i += 1
+    def repl(value):
+        if(isinstance(value, datetime.datetime)):
+            value = value.strftime("%Y-%m-%d %H:%M:%S") + \
+                f'.{value.microsecond // 1000:03}'
+        else:
+            value = str(value)
+        return value.replace('\'', '\'\'')
 
-        cursor.close()
+    i = 0
+    insert_statement = ""
+    for row in cursor:
+        if i % 1000 == 0:
+            insert_statement = f"; INSERT INTO {table_name} ({', '.join(columns)}) VALUES \n" # noqa
+        else:
+            insert_statement = ", "
+        insert_statement += "("
+        for value in row:
+            insert_statement += \
+                (f"'{repl(value)}'" if value is not None else 'NULL') + ", "
+        insert_statement = insert_statement[:-2] + ")\n"
+        print(insert_statement)
+        i += 1
 
-        print(";\n")
+    cursor.close()
+
+    print(";\n")
 
 
 def main():
@@ -103,6 +167,8 @@ def main():
     parser.add_argument('-t', '--tables', nargs='+', help='Dump several tables from the database.')
     parser.add_argument('-d', '--no-data', action='store_true', help='No row information. Dump only the table structure.')
     parser.add_argument('--no-create-info', action='store_true', help='No CREATE TABLE statements.')
+    parser.add_argument('--no-indices', action='store_true',
+                        help='No adding of PRIMARY KEYS and no CREATE INDEX statements.')
     parser.add_argument('--add-drop-table', action='store_true', help='Add a DROP TABLE statement before each CREATE TABLE statement.')
     parser.add_argument('--default-character-set', help='Set the default character set.')
 
@@ -116,6 +182,7 @@ def main():
               tables=args.tables,
               no_data=args.no_data,
               no_create_info=args.no_create_info,
+              no_indices=args.no_indices,
               add_drop_table=args.add_drop_table)
 
 
