@@ -1,20 +1,24 @@
-import sys
-import pyodbc
 import argparse
 import datetime
+import sys
+
+import pyodbc
+
 
 def mssqldump(database: str,
               user: str = "SA",
               password: str = "",
               host: str = "localhost",
               port: int = 1433,
+              path: str = "",
               tables: list[str] | None = None,
               no_data: bool = False,
               no_create_info: bool = False,
               no_indices: bool = False,
               add_drop_table: bool = False):
 
-    conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host},{port};DATABASE={database};UID={user};PWD={password}'
+    path = '\\' + path if path else ''
+    conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host}{path},{port};DATABASE={database};UID={user};PWD={password}'
 
     conn = pyodbc.connect(conn_str)
 
@@ -78,12 +82,14 @@ def dump_indices(conn, table_name):
     # Construct the primary key creation statements
     for index_name, columns in pks.items():
         columns_list = ', '.join(columns)
-        print(f"ALTER TABLE {table_name} ADD CONSTRAINT {index_name} PRIMARY KEY ({columns_list});")
+        print(
+            f"ALTER TABLE {table_name} ADD CONSTRAINT {index_name} PRIMARY KEY ({columns_list});")
 
     # Construct the index creation statements
     for index_name, columns in index_statements.items():
         columns_list = ', '.join(columns)
         print(f"CREATE INDEX {index_name} ON {table_name} ({columns_list});")
+
 
 def dump_table(conn, table_name, no_data, no_create_info, no_indices,
                add_drop_table):
@@ -125,7 +131,7 @@ def dump_table(conn, table_name, no_data, no_create_info, no_indices,
     cursor.execute(data_query)
 
     def repl(value):
-        if(isinstance(value, datetime.datetime)):
+        if (isinstance(value, datetime.datetime)):
             value = value.strftime("%Y-%m-%d %H:%M:%S") + \
                 f'.{value.microsecond // 1000:03}'
         else:
@@ -136,7 +142,7 @@ def dump_table(conn, table_name, no_data, no_create_info, no_indices,
     insert_statement = ""
     for row in cursor:
         if i % 1000 == 0:
-            insert_statement = f"; INSERT INTO {table_name} ({', '.join(columns)}) VALUES \n" # noqa
+            insert_statement = f"; INSERT INTO {table_name} ({', '.join(columns)}) VALUES \n"  # noqa
         else:
             insert_statement = ", "
         insert_statement += "("
@@ -158,19 +164,32 @@ def main():
         add_help=False)
 
     # General options
-    parser.add_argument('--help', action='help', help='Display this help message and exit.')
-    parser.add_argument('-B', '--database', type=str, required=True, help='The database to dump.')
-    parser.add_argument('-u', '--user', default='SA', help='The MySQL user to connect as.')
-    parser.add_argument('-p', '--password', default='', help='The password for the MySQL user.')
-    parser.add_argument('-h', '--host', default='localhost', help='The host to connect to (default: localhost).')
-    parser.add_argument('-P', '--port', type=int, default=1433, help='The port number to use for the connection.')
-    parser.add_argument('-t', '--tables', nargs='+', help='Dump several tables from the database.')
-    parser.add_argument('-d', '--no-data', action='store_true', help='No row information. Dump only the table structure.')
-    parser.add_argument('--no-create-info', action='store_true', help='No CREATE TABLE statements.')
+    parser.add_argument('--help', action='help',
+                        help='Display this help message and exit.')
+    parser.add_argument('-B', '--database', type=str,
+                        required=True, help='The database to dump.')
+    parser.add_argument('-u', '--user', default='SA',
+                        help='The MySQL user to connect as.')
+    parser.add_argument('-p', '--password', default='',
+                        help='The password for the MySQL user.')
+    parser.add_argument('-h', '--host', default='localhost',
+                        help='The host to connect to (default: localhost).')
+    parser.add_argument('-P', '--port', type=int, default=1433,
+                        help='The port number to use for the connection.')
+    parser.add_argument('--path', type=str, default="",
+                        help='The path (named instance) to use for the connection.')
+    parser.add_argument('-t', '--tables', nargs='+',
+                        help='Dump several tables from the database.')
+    parser.add_argument('-d', '--no-data', action='store_true',
+                        help='No row information. Dump only the table structure.')
+    parser.add_argument('--no-create-info', action='store_true',
+                        help='No CREATE TABLE statements.')
     parser.add_argument('--no-indices', action='store_true',
                         help='No adding of PRIMARY KEYS and no CREATE INDEX statements.')
-    parser.add_argument('--add-drop-table', action='store_true', help='Add a DROP TABLE statement before each CREATE TABLE statement.')
-    parser.add_argument('--default-character-set', help='Set the default character set.')
+    parser.add_argument('--add-drop-table', action='store_true',
+                        help='Add a DROP TABLE statement before each CREATE TABLE statement.')
+    parser.add_argument('--default-character-set',
+                        help='Set the default character set.')
 
     args = parser.parse_args()
 
@@ -179,6 +198,7 @@ def main():
               password=args.password,
               host=args.host,
               port=args.port,
+              path=args.path,
               tables=args.tables,
               no_data=args.no_data,
               no_create_info=args.no_create_info,
