@@ -9,7 +9,6 @@ def mssqldump(database: str,
               user: str = "SA",
               password: str = "",
               host: str = "localhost",
-              port: int = 1433,
               path: str = "",
               tables: list[str] | None = None,
               no_data: bool = False,
@@ -18,7 +17,7 @@ def mssqldump(database: str,
               add_drop_table: bool = False):
 
     path = '\\' + path if path else ''
-    conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host}{path},{port};DATABASE={database};UID={user};PWD={password}'
+    conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={host}{path};DATABASE={database};UID={user};PWD={password}'
 
     conn = pyodbc.connect(conn_str)
 
@@ -174,8 +173,6 @@ def main():
                         help='The password for the MySQL user.')
     parser.add_argument('-h', '--host', default='localhost',
                         help='The host to connect to (default: localhost).')
-    parser.add_argument('-P', '--port', type=int, default=1433,
-                        help='The port number to use for the connection.')
     parser.add_argument('--path', type=str, default="",
                         help='The path (named instance) to use for the connection.')
     parser.add_argument('-t', '--tables', nargs='+',
@@ -197,7 +194,6 @@ def main():
               user=args.user,
               password=args.password,
               host=args.host,
-              port=args.port,
               path=args.path,
               tables=args.tables,
               no_data=args.no_data,
